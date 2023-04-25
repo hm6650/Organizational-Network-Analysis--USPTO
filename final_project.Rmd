@@ -1,0 +1,283 @@
+---
+title: "Project 4 Centrality and efficiency"
+author: "Himanshu Mayank"
+date: "2023-04-03"
+output:
+  html_notebook: default
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+
+
+```{r,echo = FALSE}
+library(arrow)
+library(readr)
+library(dplyr)
+library(tidyr)
+library(igraph)
+```
+
+```{r}
+# Select only the columns "ego_examiner_id" and "alter_examiner_id" from the "edges" data frame
+data_path <- "D:\\MMA Material\\Term 4\\ORBB\\672_project_data\\"
+applications <- read_parquet(paste0(data_path,"output.parquet"))
+edges <- read_csv(paste0(data_path,"edges_sample.csv"))
+```
+<h3> Creation of graph </h3>
+<p> A graph is created and the different centralities of each node is calculated</p>
+```{r}
+library(igraph)
+library(knitr)
+edges_subset <- select(edges, ego_examiner_id, alter_examiner_id)
+# Remove any rows with null values
+edges_subset <- drop_na(edges_subset)
+# Create a graph from the edges_subset tibble
+g <- graph_from_data_frame(edges_subset, directed = FALSE)
+# Set the node names based on the ego_examiner_id and alter_examiner_id columns
+node_ids <- unique(c(edges_subset$ego_examiner_id, edges_subset$alter_examiner_id))
+V(g)$name <- as.character(node_ids[node_ids %in% V(g)$name])
+
+# Plot the graph
+plot(g)
+
+# Calculate the degree, betweenness centrality, closeness centrality, eigenvector centrality and pagerank of each node
+degree <- degree(g)
+betweenness <- betweenness(g)
+closeness <- closeness(g)
+eigen_centrality <- eigen_centrality(g)$vector
+page_rank <- page.rank(g)$vector
+
+# Create a dataframe with the node IDs and centrality measures
+result_df <- data.frame(node_id = V(g)$name,
+                        degree = degree,
+                        betweenness = betweenness,
+                        closeness = closeness,
+                        eigenvector_centrality = eigen_centrality,
+                        pagerank = page_rank
+                        )
+
+# Print the dataframe
+kable(head(result_df,10), caption = "Centrality Measures for Patent Examiner Network")
+
+```
+
+
+<h3> Data Transformation</h3>
+Processing time of each application is calculated  from filing_date to patent_issue_dat or patent_abandon_date
+
+```{r}
+applications$filing_date <- as.Date(applications$filing_date)
+#applications$application_result_date <- as.Date(applications$application_result_date, format = "%Y-%m-%d")
+applications$application_result_date <- ifelse(!is.na(applications$patent_issue_date), 
+                                               as.Date(applications$patent_issue_date), 
+                                               as.Date(applications$abandon_date))
+applications$application_result_date <- as.Date(applications$application_result_date,
+                                                format = "%Y-%m-%d", origin = "1970-01-01")
+applications$application_processing_time <- as.integer(difftime
+                                                       (applications$application_result_date, 
+                                                         applications$filing_date, units = "days"))
+```
+
+```{r}
+# Convert node_id column in result_df to double
+result_df$node_id <- as.numeric(result_df$node_id)
+
+process_data <- select(applications, examiner_id, examiner_art_unit, tc, race, tenure_days, gender, application_processing_time)
+process_data$examiner_id <- as.numeric(process_data$examiner_id)
+
+# Perform left join
+# join process_data and result_df by examiner_id and node_id, respectively
+# remove rows with NaN values in result_df
+result_df <- result_df[complete.cases(result_df),]
+# remove rows with NaN values in process_data
+process_data <- process_data[complete.cases(process_data),]
+process_data$tc = as.character(process_data$tc)
+joined_data <- left_join(process_data, result_df, by = c("examiner_id" = "node_id"))
+# remove rows with NAs
+joined_data <- na.omit(joined_data)
+write.csv(joined_data, "D:\\MMA Material\\Term 4\\ORBB\\672_project_data\\applications_data.csv", row.names = FALSE)
+```
+```{r}
+joined_data<- read_csv("D:\\MMA Material\\Term 4\\ORBB\\672_project_data\\applications_data.csv")
+df<- joined_data %>%
+  group_by(examiner_art_unit) %>%
+  summarise(
+    art_unit_white_pcercent = mean(race == "white") * 100,
+    art_unit_black_percent = mean(race == "black") * 100,
+    art_unit_asian_percent = mean(race == "Asian") * 100,
+    art_unit_hispanic_percent = mean(race == "Hispanic") * 100,
+    art_unit_other_percent= mean(race == "other") * 100,
+    art_unit_female_percent = mean(gender == "female") * 100,
+    art_unit_male_percent = mean(gender == "male") * 100,
+    art_unit_avg_betweenness = mean(betweenness),
+    art_unit_avg_closeness = mean(closeness),
+    art_unit_avg_eigenvector = mean(eigenvector_centrality),
+    art_unit_avg_pagerank = mean(pagerank),
+    art_unit_avg_degree = mean(degree),
+    art_unit_avg_betweenness = mean(betweenness),
+    art_unit_avg_closeness = mean(closeness),
+    art_unit_avg_eigenvector = mean(eigenvector_centrality),
+    art_unit_avg_pagerank = mean(pagerank),
+    art_unit_q1_betweenness = quantile(betweenness, 0.25),
+    art_unit_median_betweenness = median(betweenness),
+    art_unit_q3_betweenness = quantile(betweenness, 0.75),
+    art_unit_q1_closeness = quantile(closeness, 0.25),
+    art_unit_median_closeness = median(closeness),
+    art_unit_q3_closeness = quantile(closeness, 0.75),
+    art_unit_q1_eigenvector = quantile(eigenvector_centrality, 0.25),
+    art_unit_median_eigenvector = median(eigenvector_centrality),
+    art_unit_q3_eigenvector = quantile(eigenvector_centrality, 0.75),
+    art_unit_q1_pagerank = quantile(pagerank, 0.25),
+    art_unit_median_pagerank = median(pagerank),
+    art_unit_q3_pagerank = quantile(pagerank, 0.75),
+    art_unit_avg_tenure_days = mean(tenure_days),
+    art_unit_q1_tenure_days = quantile(tenure_days, 0.25),
+    art_unit_median_tenure_days = median(tenure_days),
+    art_unit_q3_tenure_days = quantile(tenure_days, 0.75),
+    art_unit_avg_application_processing_time = mean(application_processing_time)
+  )
+write.csv(df, "D:\\MMA Material\\Term 4\\ORBB\\672_project_data\\art_unit_data.csv", row.names = FALSE)
+
+```
+
+
+
+```{r}
+df <- read_csv("D:\\MMA Material\\Term 4\\ORBB\\672_project_data\\art_unit_data.csv")
+library(knitr)
+
+df[, c("art_unit_white_percent", "art_unit_black_percent", "art_unit_asian_percent", "art_unit_hispanic_percent", "art_unit_other_percent", "art_unit_female_percent", "art_unit_male_percent", "art_unit_avg_betweenness", "art_unit_avg_closeness", "art_unit_avg_eigenvector", "art_unit_avg_pagerank", "art_unit_avg_degree", "art_unit_avg_tenure_days")] <- scale(df[, c("art_unit_white_percent", "art_unit_black_percent", "art_unit_asian_percent", "art_unit_hispanic_percent", "art_unit_other_percent", "art_unit_female_percent", "art_unit_male_percent", "art_unit_avg_betweenness", "art_unit_avg_closeness", "art_unit_avg_eigenvector", "art_unit_avg_pagerank", "art_unit_avg_degree", "art_unit_avg_tenure_days")])
+kable(head(df,10), caption = "Final table")
+```
+
+
+
+```{r}
+df <- df[, c("art_unit_avg_application_processing_time", "art_unit_white_percent", "art_unit_black_percent", "art_unit_asian_percent", "art_unit_hispanic_percent", "art_unit_other_percent", "art_unit_female_percent", "art_unit_male_percent", "art_unit_avg_betweenness", "art_unit_avg_closeness", "art_unit_avg_eigenvector", "art_unit_avg_pagerank", "art_unit_avg_degree","art_unit_avg_tenure_days")]
+```
+
+<h3> Creating a decision tree </h3>
+```{r}
+library(rpart)
+set.seed(123)
+train_index <- sample(nrow(df), 0.7 * nrow(df))
+train_data <- df[train_index, ]
+test_data <- df[-train_index, ]
+# Fit decision tree model
+model_dt <- rpart(art_unit_avg_application_processing_time ~ . , data = train_data, method = "anova")
+
+# Make predictions on test data
+pred_dt <- predict(model_dt, test_data)
+
+# Calculate R-squared
+rsq_dt <- cor(test_data$art_unit_avg_application_processing_time, pred_dt)^2
+
+# Calculate mean squared error
+mse_dt <- mean((pred_dt - test_data$art_unit_avg_application_processing_time)^2)
+
+# Print R-squared and MSE
+cat(paste("Decision Tree R-squared:", round(rsq_dt, 2), "\n"))
+cat(paste("Decision Tree MSE:", round(mse_dt, 2), "\n"))
+```
+```{r}
+library(rpart.plot)
+# Set figure size
+options(repr.plot.width = 8, repr.plot.height = 6)
+
+# Open PDF device
+#pdf("decision_tree.pdf")
+
+# Plot decision tree
+rpart.plot(model_dt)
+
+# Close PDF device
+dev.off()
+```
+```{r}
+library(randomForest)
+library(caret)
+# Split data into training and testing sets
+set.seed(123)
+train_index <- sample(nrow(df), 0.7 * nrow(df))
+train_data <- df[train_index, ]
+test_data <- df[-train_index, ]
+
+# Create random forest model
+model_rf <- randomForest(art_unit_avg_application_processing_time ~ art_unit_white_percent + art_unit_black_percent + art_unit_asian_percent + art_unit_hispanic_percent + art_unit_other_percent + art_unit_female_percent + art_unit_male_percent + art_unit_avg_betweenness + art_unit_avg_closeness + art_unit_avg_eigenvector + art_unit_avg_pagerank + art_unit_avg_degree + art_unit_avg_tenure_days , data = train_data, ntree = 50)
+
+# Make predictions on test data
+pred_rf <- predict(model_rf, test_data)
+
+# Calculate R-squared
+rsq_rf <- cor(test_data$art_unit_avg_application_processing_time, pred_rf)^2
+
+# Calculate mean squared error
+mse_rf <- mean((pred_rf - test_data$art_unit_avg_application_processing_time)^2)
+
+# Print R-squared and MSE
+cat(paste("Random Forest R-squared:", round(rsq_rf, 2), "\n"))
+cat(paste("Random Forest MSE:", round(mse_rf, 2), "\n"))
+
+```
+```{r}
+# Extract variable importance
+var_importance <- importance(model_rf)
+
+# Print variable importance
+print(var_importance)
+
+```
+
+```{r}
+library(ggplot2)
+
+df_var_importance <- as.data.frame(var_importance)
+
+ggplot(df_var_importance, aes(x = rownames(df_var_importance), y = IncNodePurity)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  coord_flip() +
+  labs(x = "Predictor Variables", y = "Importance Score", 
+       title = "Variable Importance Plot")
+
+```
+
+
+
+
+<h3> Creating linear regression models</h3>
+
+```{r}
+
+model <- lm(art_unit_avg_application_processing_time ~  art_unit_black_percent + art_unit_asian_percent + art_unit_hispanic_percent + art_unit_other_percent + art_unit_female_percent  + art_unit_avg_betweenness + art_unit_avg_closeness + art_unit_avg_eigenvector + art_unit_avg_pagerank + art_unit_avg_degree +  art_unit_avg_tenure_days, data = df)
+summary(model)
+
+```
+```{r}
+library(ggplot2)
+# Create a data frame of coefficients and their corresponding variables
+coef_df <- data.frame(variable = names(model$coefficients)[-1],
+                      coefficient = abs(model$coefficients[-1]))
+# Create a bar plot of the absolute values of the coefficients
+ggplot(coef_df, aes(x = variable, y = coefficient)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  coord_flip() +
+  xlab("Variable") +
+  ylab("Absolute Coefficient") +
+  ggtitle("Feature Importance Plot")
+```
+```{r}
+# Extract the coefficients and their corresponding variables
+coef_df <- data.frame(variable = names(model$coefficients)[-1],
+                      coefficient = model$coefficients[-1])
+
+# Create a bar chart showing the positive and negative impact of variables
+library(ggplot2)
+ggplot(coef_df, aes(x = variable, y = coefficient, fill = coefficient > 0)) +
+  geom_bar(stat = "identity", color = "black") +
+  scale_fill_manual(values = c("red", "green"), labels = c("Negative", "Positive")) +
+  coord_flip() +
+  labs(x = "Variable", y = "Coefficient", fill = "Positive\nor\nNegative") +
+  ggtitle("Effect of variables in  the application processing time")
+```
